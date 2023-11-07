@@ -1,0 +1,549 @@
+---
+title: "Generating Simplicial Complex for Russel Essay Data"
+author: "Andrew Disher"
+date: "2023-11-06"
+output: 
+  html_document:
+    theme: cerulean
+    toc: true
+    toc_depth: 3
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Packages and Their Imported Functions
+
+```{r}
+box::use(
+  dplyr[`%>%`, arrange, filter, group_by, group_by_at, join_by, left_join, mutate_at, 
+        summarize, summarize_at, ungroup]
+)
+```
+
+## Importing Existing Data Files
+
+```{r}
+lang_data_table <- read.csv(file = "data/lang_data_table.csv")
+complex_df <- read.csv(file = "data/complex_df.csv")
+```
+
+## Data Set Overview
+
+The data we are working with is the unique words (actually lemmas of words) that appear
+in Bertrand Russel's essay **The Place of Science in a Liberal Education.**
+
+From this essay, we've produced a data set, stored in the object **complex_df**, that
+shows how many languages have influenced the English words that appeared in the essay.
+The word with the most language influences is the adjective *new*. This word and part 
+of speech combination, as well as all the others that appear in Russel's essay,
+exist in the Identifier column. The count column shows the number of language influences
+for that word. 
+
+A simplex of dimension 22 is the largest one that appears in the Russel essay, so
+our entire simplicial complex will be of dimension 22 as well. However, for the purposes
+of this example document, we'll only be examining simplices of at most dimension 
+2 (combinations of 3 languages).
+
+```{r}
+complex_df %>% 
+  head()
+```
+
+With this constraint in mind, we'll subset the above data frame.
+
+```{r}
+complex_df <- complex_df %>% 
+  filter(Count <= 3) %>% 
+  arrange(Identifier)
+  
+
+complex_df %>% 
+  head()
+```
+
+The other data set, **lang_data_table**, contains the individual word and part of 
+speech combinations, their frequency in the text, and the individual languages that
+have influenced these English words.
+
+```{r}
+lang_data_table %>% 
+  head()
+```
+
+Since we are imposing the restraint mentioned above, we also need to subset this data
+set. 
+
+To do this, we must identify the unique words the **complex_df** and retain only
+these words in the Identifier column of **lang_data_table**. I'll also sort the data
+frame like the **complex_df** for comparison.
+
+```{r}
+# Obtain unique words
+unique_words <- unique(complex_df$Identifier)
+
+# Filter on unique words in lang_data_table
+lang_data_table <- lang_data_table %>% 
+  filter(Identifier %in% unique_words) %>% 
+  arrange(Identifier)
+
+lang_data_table %>% 
+  head()
+```
+
+## Producing an Adequate Data Structure to Contain Simplicial Complex Data
+
+A simplicial complex for our data, again, has simplices that of at most dimension
+2, i.e. triangles. But it wil also contain the lower order simplices as well.
+
+A *team* of languages is what I'll define as a group of languages that have shared
+influences on a number of words (at least one). 
+
+As a result, we'll need 3 data frames to contain language *teams* and the frequencies
+within the text for the words they correspond to. For example, the data frame with 
+teams of 3 languages (2-simplices) will contain *m* rows for *m* words, with each row 
+corresponding to a word. There will be 3 columns, one for each of the languages 
+in the team and an additional column to contain that word's frequency within the text.
+
+I'll run some code to create this data structure step by step, and explain it 
+along the way. 
+
+```{r}
+compact_languages_df <- lang_data_table %>% 
+  group_by(Identifier) %>% 
+  summarize(Token_Freq = mean(Frequency),
+            All_Languages = paste0(Languages, collapse = "_"))
+
+compact_languages_df %>% 
+  head()
+```
+
+This is an intermediate data frame which will be useful for iterating through. All
+we have done here is create another version of **lang_data_table** with another column
+containing a string representation of the language *team*, instead of having multiple
+rows for the same word each with one of the languages in that team. Each language 
+in this string is separated by an underscore. 
+
+Now, we want to join this **compact_languages_df** with the **complex_df** on the column
+Identifier. What we get is **languages_all_data**, which contains information on 
+the number of languages influencing the word identifier, the identifier's frequency 
+within Russel's essay, and the string representation of the languages influencing
+the word.
+
+```{r}
+languages_all_data <- left_join(x = complex_df,
+                                y = compact_languages_df,
+                                by = join_by(Identifier == Identifier))
+
+colnames(languages_all_data)[2] <- "Lang_Count"
+
+languages_all_data %>% 
+  head()
+```
+
+We'll go ahead and split this data frame on on the Lang_Count column, like so. 
+
+```{r}
+# Acquire list of the data frame split on language Count
+split_df <- split(languages_all_data, languages_all_data$Lang_Count)
+```
+
+This helps us access subsets of the data that correspond to a particular set *n*-dimensional
+simplices. For example, to access all 2-dimensional simplices (triangles), we can use
+
+```{r}
+split_df[[3]] %>% 
+  head()
+```
+
+We can also do this 
+
+```{r}
+split_df[[2]] %>% 
+  head()
+```
+
+to acquire 1-dimensional simplices (edges or lines), but this actually isn't the 
+full set of edges. There may be edges that arise from words that aren't in this data frame
+but do arise from the triangles in the 2-dimensional simplex data frame. 
+
+If we print out the unique entries in the All_languages column for each of these 
+subsets, it becomes more clear. 
+
+```{r}
+# 1-dimensional simplices, i.e. edges
+unique(split_df[[2]][, 4])
+
+# 2-dimensional simplices, i.e. triangles
+unique(split_df[[3]][, 4])
+```
+
+You'll notice that the Danish_Dutch_German team of languages that appears in the 
+2-dimensional simplex data frame (row with label ## [11] above) also contains the 1-dimensional simplex team of 
+Danish_Dutch. This 1-dimensional simplex does NOT appear in the 1-dimensional
+simplex data frame. There are other examples too. 
+
+This is why we need to go through the higher order data frames and find which 
+lower dimensional simplices that exist in them, which also don't exist in the 
+current lower dimensional simplex data frames. 
+
+To do this, we'll start by creating a list of *near empty* data frames, one for 
+each of our revised subset of simplices. 
+
+```{r}
+# Instantiate list to contain data frames
+df_list <- list()
+
+# For loop to create data frames (we need 3 of them)
+for (split_index in 3:1) {
+  # Specify name of df
+  df_name <- paste0("split_df_", split_index)
+  
+  # Create new data frame for current split
+  df_list[[split_index]] <- matrix(data = 0, 
+                                   nrow = 1, 
+                                   ncol = split_index + 1) %>% 
+    as.data.frame()
+                                   
+}
+```
+
+Here we can examine each data frame in the list. They have placeholder columns for
+each language that exists in a *team*, or simplex. They also have one additional 
+column to contain a frequency, like before. 
+
+```{r}
+# 0-dimensional simplex data frame, for points/vertices
+df_list[[1]]
+
+# 1-dimensional simplex data frame, for edges
+df_list[[2]]
+
+# 2-dimensional simplex data frame, for triangles
+df_list[[3]]
+```
+
+You'll notice they each have an existing row of zeros. This is simply for ease of 
+binding new rows to them, so that R does not accidentally rename the columns with 
+values in the data to come. We'll remove them later, and they are not important. 
+
+In the next section, we'll actually start to populate these data frames. 
+
+## Populating the New Data Structure with Existing Simplices
+
+First, we'll begin by populating these new data frames with the simplices we already know
+about. This will entail iterating through each of the rows in each of the data frame 
+subsets in **split_df**, parsing the string representation of languages we created earlier,
+and storing the languages in each of the columns of the new simplex data frames. We'll also 
+store the frequency values in the additional column as well. 
+
+What this actually means will become a little more appparent after we print the 
+results. 
+
+```{r}
+# For loop to store language teams data in newly created data frames
+for (split_index in 3:1) {
+  # Get current data frame
+  temp_df <- split_df[[split_index]]
+  
+  # Iterate over its rows
+  for (row in 1:nrow(temp_df)) {
+    # Acquire language vector
+    lang_list <- temp_df[row, 4] %>% 
+      strsplit(split = "_", fixed = TRUE) %>% 
+      unlist() %>% 
+      sort()
+    
+    # Acquire value for token frequency
+    token_freq <- temp_df[row, 3]
+    
+    # Bind language list to appropriate `high level` data frame
+    df_list[[split_index]] <- rbind(df_list[[split_index]],
+                                    c(lang_list, token_freq))
+  }
+  
+  # Remove placeholder binding row of zeros in first row of each data frame
+  df_list[[split_index]] <- df_list[[split_index]][-1, ]
+  
+  # Convert token frequency column to numeric
+  df_list[[split_index]][, split_index + 1] <- df_list[[split_index]][, split_index + 1] %>% 
+    as.numeric()
+}
+```
+
+Let's look at the 2-dimensional simplex data frame, for our triangles.
+
+```{r}
+df_list[[3]] %>% 
+  head(10)
+```
+
+The rows of this data frame still correspond to individual words. However, you'll
+notice that there are many repeats for the languages *teams*. The same is true for
+the 1-dimensional simplices 
+
+```{r}
+df_list[[2]] %>% 
+  head(10)
+```
+
+and the 0-dimensional simplices
+
+```{r}
+df_list[[1]] %>% 
+  head(10)
+```
+
+We should aggregate the frequencies (in column V4 for triangles, column V3 for edges, and column V2 for vertices)
+according to the available language columns. We'll do this in a for loop for each of the 3 
+data frames. 
+
+```{r}
+for (df_index in 3:1) {
+  # Define grouping column names 
+  cols2group <- colnames(df_list[[df_index]])[1:df_index]
+  
+  # Define column to summarize (the frequency column)
+  col2summarize <- colnames(df_list[[df_index]])[df_index + 1]
+  
+  # Summarize the current data frame
+  df_list[[df_index]] <- df_list[[df_index]] %>% 
+    group_by_at(cols2group) %>% 
+    summarize_at(.vars = col2summarize, .funs = sum) %>% 
+    ungroup()
+}
+```
+
+Let's print the new, aggregated data frame for 2-dimensional simplices only, as an
+example. 
+
+```{r}
+df_list[[3]] 
+```
+
+Fantastic! Now, we have unique simplices with aggregated frequencies (i.e. weights)
+for the existing simplices. It's important to note that, for triangles, the frequencies/weights
+in column V4 are weights for the interior area of the triangles. 
+
+They are ALSO weights for the edges AND vertices within the triangles. This is 
+not entirely correct, since we know that there are also weights, for example, for edges
+in the 1-dimensional simplex data frame (**df_list[[2]]**) that aren't accounted for 
+in the 2-dimensional simplex data frame. 
+
+This is ok, since for the 2-dimensional simplex data frame, it is the highest order
+simplex we are working with. But, for the lower order simplex data frames, we need 
+to add the weights of the higher order data frames to the lower order data frames. 
+
+We will now begin the process of determining which lower order simplex subsets exist
+in the higher order simplices, but not in our current lower order simplex data frames, 
+and generate additional rows in the corresponding lower order simplex data frames. 
+
+## Generating Unaccounted for Lower Order Simplices
+
+This is where the coding becomes more complex. Take, for example, the first 2-dimensional
+simplex in **df_list[[3]]**.
+
+```{r}
+df_list[[3]][1,]
+```
+It is a triangle created with Danish, Dutch, and German as its three languages, with 
+a weight of 2.
+
+How many 1-dimensional simplex subsets (edges) can we create? We can determine this 
+with the *n* Choose *k* mathematical expression, using the function `choose(n, k)`.
+
+```{r}
+choose(3, 2)
+```
+
+Now, what are those simplices? We can find out by applying the function `combn()`.
+We'll pipe the output pairs to the transpose function `t()` to get it in a format
+that we are already using in the 1-dimensional simplex data frame.
+
+```{r}
+combn(df_list[[3]][1, 1:3], m = 2) %>% 
+  t()
+```
+
+This seems like a trivial task by hand, but we'll have to apply this to each of the 
+rows in the 2-dimensional simplex data frame. AND note that, in the beginning of this 
+report, we had an original data set containing high dimensional simplices, with *teams*
+of languages numbering as high as 23!!!! This produces a large number of combinations.
+
+We won't be dealing with those here, but note that this will be very important when we 
+apply this to the full data set at a later date. 
+
+This triple for loop will iterate through each data frame and compute all lower order
+simplices (2nd for loop is for each case of a lower order simplex), from each of the rows
+in the third for loop. It will then append the resulting simplices to the simplex data frames
+we already have in **df_list**.
+
+```{r}
+for (df_index in 2:length(df_list)) {
+  # Store current data frame and its number of columns in variables
+  current_df <- df_list[[df_index]]
+  num_cols <- ncol(current_df)
+  
+  for (simplex_order in (num_cols - 2):1) {
+    # Define temporary data frame for storage of generated sub-simplices
+    storage_df <- matrix(data = 0, 
+                         nrow = 1, 
+                         ncol = simplex_order + 1) %>% 
+                  as.data.frame()
+    
+    for (row in 1:nrow(df_list[[df_index]])) {
+      # Generate simplex subset
+      simplex_subset <- combn(current_df[row, 1:(num_cols - 1)], m = simplex_order) %>%
+        t()
+      
+      # Cbind vector of frequencies to simplex_subset. Vector of frequencies is obtained
+      # by taking the frequency of current row (column V4) and replicating it a number of times. 
+      simplex_subset <- cbind(simplex_subset, 
+                              current_df[row, num_cols] %>% 
+                                unlist() %>% 
+                                unname() %>% 
+                                rep(times = nrow(simplex_subset)))
+      
+      # Store simplex_subset in storage_df
+      storage_df <- storage_df %>% 
+        rbind(simplex_subset)
+    }
+    # Remove placeholder binding row of zeros in first row of storage_df
+      storage_df <- storage_df[-1, ]
+      
+    # Coerce storage_df to be a data frame
+    storage_df <- storage_df %>% 
+      as.data.frame()
+    
+    # Append end result of storage_df to its corresponding lower order simplex data frame in df_list
+    df_list[[simplex_order]] <- df_list[[simplex_order]] %>%
+      rbind(storage_df) %>% 
+      as.data.frame()
+  }
+}
+```
+
+Before we explore the contents, we'll first treat resulting new data frames in df_list. 
+A consequence of running a complicated triple for loop with many different data binding
+operations is it changes the structure of the data in somewhat unintended ways. 
+
+```{r}
+# Function to apply in dplyr verb functions
+treat_df <- function(column) {
+  new_column <- column %>% 
+    unlist() %>% 
+    unname()
+  
+  return(new_column)
+}
+
+# Treatment of data frames
+for (df_index in 1:length(df_list)) {
+  # Define column to summarize (the frequency column)
+  cols2mutate <- colnames(df_list[[df_index]])
+  
+  # Treat data frame's columns
+  df_list[[df_index]] <- df_list[[df_index]] %>% 
+    mutate_at(.vars = cols2mutate, .funs = treat_df)
+}
+```
+
+## Examing Results of Simplex Generation
+
+Let's take a look at our data frames now! Our triangles data frame should remain unchanged, with 17 rows. 
+Let's see if that's the case. 
+```{r}
+df_list[[3]] %>% 
+  nrow()
+
+df_list[[3]] %>% 
+  head()
+```
+
+Very nice! Now, for more interesting results, let's check out the lower ourder
+simplex data frames. For our edge data frame, with simplex dimension 1, we started with 
+15 rows. How many rows, or new edges, should we have added to it? The answer is simple. 
+We have 17 triangles, so if we compute `choose(n = 3, k = 2)` 17 times, we should get
+51 pairs combinations. 
+
+```{r}
+choose(3, 2) * 17
+```
+
+So, our new edge data frame should have *51 + 15 = 66*. Let's check.
+
+```{r}
+df_list[[2]] %>% 
+  nrow()
+```
+
+Amazing! Now, many vertices should we now have, after generating new ones from BOTH
+the triangle and edge data frame???
+
+Well, our triangle data frame should yield us `choose(3, 1) * 17` vertices, or new rows. This
+equates to 51 new rows. The original number of edges we had was 15, so `choose(2, 1) * 15` should give us the number 
+if rows that the edge data frame has contributed to the node data frame. Adding these and 
+the original 8 nodes/vertices, we get
+
+```{r}
+choose(3, 1) * 17 + choose(2, 1) * 15 + 8
+```
+
+And the number of rows our vertex data frame has is
+
+```{r}
+df_list[[1]] %>% 
+  nrow()
+```
+
+And there we have it! We have generated all the lower order simplices in our example
+simplical complex. One last task to address is that, after weve generated our new
+lower order simplices, we are bound to have repeats, like before. Therefore, we need 
+to repeat our aggregation operation that we performed earlier on each data frame, summing the
+frequencies across rows, grouping by the columns of languages. 
+
+```{r}
+for (df_index in 3:1) {
+  # Define grouping column names 
+  cols2group <- colnames(df_list[[df_index]])[1:df_index]
+  
+  # Define column to summarize (the frequency column)
+  col2summarize <- colnames(df_list[[df_index]])[df_index + 1]
+  
+  # Summarize the current data frame
+  df_list[[df_index]] <- df_list[[df_index]] %>% 
+    group_by_at(cols2group) %>% 
+    summarize_at(.vars = col2summarize, .funs = sum) %>% 
+    ungroup()
+}
+```
+
+## Final Results
+
+Interstingly, we have many simplices repeated. So, our final data frames are still
+quite small. 
+
+Before, we observed that the 2-dimensional simplex data frame contained the team 
+of languages Danish_Dutch_German. We also observed that, as an example, the 1-dimensional
+simplex Danish_Dutch did NOT appear in our original 1-dimensional simplex data frame.
+
+Let's see if it's there now by subsetting on this condition. 
+
+```{r}
+df_list[[2]] %>% 
+  filter(V1 == "Danish" & V2 == "Dutch")
+```
+
+And it's there now. So, we can conclude that we are successful. Now, we just have to apply this 
+technique to the full simplicial complex data from Bertrand Russel's essay data. 
+
+For now, I'll write the resulting data sets for triangles, edges, and nodes in the 
+russel simplicial complex. 
+
+```{r}
+write.csv(x = df_list[[1]], file = "data/cleaned_data/russel-nodes.csv", row.names = FALSE)
+write.csv(x = df_list[[2]], file = "data/cleaned_data/russel-edges.csv", row.names = FALSE)
+write.csv(x = df_list[[3]], file = "data/cleaned_data/russel-triangles.csv", row.names = FALSE)
+```

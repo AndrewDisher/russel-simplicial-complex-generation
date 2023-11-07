@@ -1,0 +1,37 @@
+"V1","V2","V3"
+"Danish","Dutch",2
+"Danish","German",3
+"Danish","Old English",1
+"Dutch","German",4
+"Dutch","Middle Dutch",2
+"Dutch","Old English",3
+"French","Ga",1
+"French","German",3
+"French","Greek",27
+"French","Italian",10
+"French","Latin",361
+"French","Middle English",9
+"French","Old French",319
+"Ga","Old French",1
+"German","Germanic",7
+"German","Greek",1
+"German","Latin",5
+"German","Middle English",2
+"German","Old English",15
+"Germanic","Old English",7
+"Gothic","Middle English",2
+"Gothic","Old English",2
+"Greek","Latin",64
+"Greek","Russian",16
+"Indic","Latin",1
+"Italian","Latin",9
+"Italian","Middle English",6
+"Latin","Middle English",15
+"Latin","Old English",2
+"Latin","Old French",268
+"Latin","Russian",16
+"Middle Dutch","Old English",1
+"Middle English","Old English",26
+"Middle English","Old French",5
+"Old English","Old Norse",6
+"Old English","Yiddish",2
